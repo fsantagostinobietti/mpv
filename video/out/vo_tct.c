@@ -380,7 +380,7 @@ static const char* guess_best_block_element(
         struct rgb_color *best_fg, struct rgb_color *best_bg
     ) {
     int best_loss = INT_MAX;
-    enum block_elem_name best_elem;
+    enum block_elem_name best_elem = -1; // undefined
     struct rgb_color fg, bg;
     for (enum block_elem_name elem=0; elem<NUM_ELEMENTS ;++elem) {
         unsigned int loss = best_fg_bg(elem, win_pixels, //input 
@@ -407,7 +407,7 @@ static void write_all_blocks(
     const int ty = (dheight - sheight) / 2;
     // window of rgb pixels
     struct rgb_color win_pixels[WINDOW_SZ];
-    struct rgb_color fg, bg;
+    struct rgb_color fg = {}, bg = {};
 
     for (int y = 0; y < sheight * WINDOW_H; y += WINDOW_H) {
         unsigned char *rows[WINDOW_H];
