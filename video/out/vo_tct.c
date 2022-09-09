@@ -98,7 +98,7 @@ struct priv {
    Block Elements data structure
 */
 
-enum block_elem_name {
+enum block_elem_type {
     LOWER_HALF /* "▄" */, LEFT_HALF /* "▌" */,
     QUADRANT_LOWER_LEFT /* "▖" */, QUADRANT_LOWER_RIGHT /* "▗" */, 
     QUADRANT_UPPER_LEFT /* "▘" */, QUADRANT_UPPER_RIGHT /* "▝" */,
@@ -180,6 +180,13 @@ static const struct block_element block_elements[NUM_ELEMENTS] = {
     {  // LEFT_SEVEN_EIGHTHS
         .bitmap=0b1111111011111110111111101111111011111110111111101111111011111110, 
         .utf8="\xe2\x96\x89" },
+};
+
+struct block_elem_info {
+    enum block_elem_type type;
+    char* utf8; // UTF8 bytes of Unicode char
+    struct rgb_color fg, bg;
+    unsigned int loss;
 };
 
 // Select i-th foreground bit out of bitmap
@@ -326,22 +333,22 @@ static struct rgb_color get_rgb(const unsigned char *base_pixel) {
 }
 
 // Compute foreground/background colors that best fit window of pixels, given a block element
-static unsigned int best_fg_bg(
-        //input
-        const enum block_elem_name elem,  const struct rgb_color win_pixels[WINDOW_SZ],
-        // output
-        struct rgb_color *mean_fg, struct rgb_color *mean_bg
-    ) {
+static struct block_elem_info best_fg_bg(
+        const enum block_elem_type type,
+        const struct rgb_color win_pixels[WINDOW_SZ] )
+{
+    struct block_elem_info elem = { .type = type, .utf8 = block_elements[type].utf8 };
+
     // sum of fg and bg values
     unsigned int sum_fg_r=0, sum_fg_g=0, sum_fg_b=0;
     unsigned int sum_bg_r=0, sum_bg_g=0, sum_bg_b=0;
     // sum of fg^2 and bg^2 values
     unsigned int sum_fg2_r=0, sum_fg2_g=0, sum_fg2_b=0;
     unsigned int sum_bg2_r=0, sum_bg2_g=0, sum_bg2_b=0;
-
+    // counters
     unsigned int num_fg=0, num_bg=0;
     for (int i=0; i<WINDOW_SZ ;++i) {
-        if ( is_fg(block_elements[elem].bitmap, i) ) {
+        if ( is_fg(block_elements[type].bitmap, i) ) {
             ++num_fg;
             sum_fg_r += win_pixels[i].r;
             sum_fg_g += win_pixels[i].g;
@@ -360,13 +367,13 @@ static unsigned int best_fg_bg(
         }
     }
     // compute mean values for foreground
-    mean_fg->r = sum_fg_r/num_fg;
-    mean_fg->g = sum_fg_g/num_fg;
-    mean_fg->b = sum_fg_b/num_fg;
+    elem.fg.r = sum_fg_r/num_fg;
+    elem.fg.g = sum_fg_g/num_fg;
+    elem.fg.b = sum_fg_b/num_fg;
     // compute mean values for background
-    mean_bg->r = sum_bg_r/num_bg;
-    mean_bg->g = sum_bg_g/num_bg;
-    mean_bg->b = sum_bg_b/num_bg;
+    elem.bg.r = sum_bg_r/num_bg;
+    elem.bg.g = sum_bg_g/num_bg;
+    elem.bg.b = sum_bg_b/num_bg;
 
     // Compute loss as variance of rgb values.  
     // NB. to reduce computation we define: loss = N * Variance(X)
@@ -374,39 +381,31 @@ static unsigned int best_fg_bg(
     //      loss = Sum_i(X[i]^2) - N * Mean(X)^2
     unsigned int loss = 0;
     // foreground pixels
-    loss += sum_fg2_r - num_fg * square( mean_fg->r );
-    loss += sum_fg2_g - num_fg * square( mean_fg->g );
-    loss += sum_fg2_b - num_fg * square( mean_fg->b );
+    loss += sum_fg2_r - num_fg * square( elem.fg.r );
+    loss += sum_fg2_g - num_fg * square( elem.fg.g );
+    loss += sum_fg2_b - num_fg * square( elem.fg.b );
     // background pixels
-    loss += sum_bg2_r - num_bg * square( mean_bg->r );
-    loss += sum_bg2_g - num_bg * square( mean_bg->g );
-    loss += sum_bg2_b - num_bg * square( mean_bg->b );
-    
-    return loss;
+    loss += sum_bg2_r - num_bg * square( elem.bg.r );
+    loss += sum_bg2_g - num_bg * square( elem.bg.g );
+    loss += sum_bg2_b - num_bg * square( elem.bg.b );
+    // update loss
+    elem.loss = loss;
+
+    return elem;
 }
 
 // Return UTF8 representation for best block element that fits window of pixels
-static const char* guess_best_block_element(
-        // input
-        struct rgb_color win_pixels[WINDOW_SZ],
-        // output
-        struct rgb_color *best_fg, struct rgb_color *best_bg
-    ) {
-    int best_loss = INT_MAX;
-    enum block_elem_name best_elem = -1; // undefined
-    struct rgb_color fg, bg;
-    for (enum block_elem_name elem=0; elem<NUM_ELEMENTS ;++elem) {
-        unsigned int loss = best_fg_bg(elem, win_pixels, //input 
-                                        &fg, &bg // output
-                                      );
-        if (loss < best_loss) {
+static const struct block_elem_info guess_best_block_element(
+        struct rgb_color win_pixels[WINDOW_SZ] )
+{
+    struct block_elem_info best_elem = { .loss = INT_MAX };
+    for (enum block_elem_type el_type=0; el_type<NUM_ELEMENTS ;++el_type) {
+        struct block_elem_info elem = best_fg_bg(el_type, win_pixels);
+        if (elem.loss < best_elem.loss) {
             best_elem = elem;
-            best_loss = loss;
-            *best_fg = fg; 
-            *best_bg = bg;
         }
     }
-    return block_elements[best_elem].utf8; // UTF8 bytes of Unicode char
+    return best_elem; 
 }
 
 static void write_all_blocks(
@@ -420,7 +419,6 @@ static void write_all_blocks(
     const int ty = (dheight - sheight) / 2;
     // window of rgb pixels
     struct rgb_color win_pixels[WINDOW_SZ];
-    struct rgb_color fg = {}, bg = {};
 
     for (int y = 0; y < sheight * WINDOW_H; y += WINDOW_H) {
         unsigned char *rows[WINDOW_H];
@@ -437,15 +435,15 @@ static void write_all_blocks(
                     rows[i] += 3; // next pixel on this row
                 }
 
-            const char *utf8_block_element = guess_best_block_element(win_pixels, &fg, &bg);
+            const struct block_elem_info elem = guess_best_block_element(win_pixels);
             if (term256) {
-                print_seq1(lut, ESC_COLOR256_BG, rgb_to_x256(bg.r, bg.g, bg.b));
-                print_seq1(lut, ESC_COLOR256_FG, rgb_to_x256(fg.r, fg.g, fg.b)); 
+                print_seq1(lut, ESC_COLOR256_BG, rgb_to_x256(elem.bg.r, elem.bg.g, elem.bg.b));
+                print_seq1(lut, ESC_COLOR256_FG, rgb_to_x256(elem.fg.r, elem.fg.g, elem.fg.b)); 
             } else {
-                print_seq3(lut, ESC_COLOR_BG, bg.r, bg.g, bg.b); 
-                print_seq3(lut, ESC_COLOR_FG, fg.r, fg.g, fg.b);  
+                print_seq3(lut, ESC_COLOR_BG, elem.bg.r, elem.bg.g, elem.bg.b); 
+                print_seq3(lut, ESC_COLOR_FG, elem.fg.r, elem.fg.g, elem.fg.b);  
             }
-            printf("%s", utf8_block_element );
+            printf("%s", elem.utf8 );
         }
         printf(ESC_CLEAR_COLORS);
     }
