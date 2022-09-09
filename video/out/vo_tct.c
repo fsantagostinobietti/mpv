@@ -38,7 +38,7 @@
 
 #define ALGO_PLAIN 1
 #define ALGO_HALF_BLOCKS 2
-#define ALGO_ALL_BLOCKS 3
+#define ALGO_MULTI_BLOCKS 3
 #define ESC_HIDE_CURSOR "\033[?25l"
 #define ESC_RESTORE_CURSOR "\033[?25h"
 #define ESC_CLEAR_SCREEN "\033[2J"
@@ -64,7 +64,7 @@ static const struct m_sub_options vo_tct_conf = {
         {"vo-tct-algo", OPT_CHOICE(algo,
             {"plain", ALGO_PLAIN},
             {"half-blocks", ALGO_HALF_BLOCKS},
-            {"all-blocks", ALGO_ALL_BLOCKS})},
+            {"multi-blocks", ALGO_MULTI_BLOCKS})},
         {"vo-tct-width", OPT_INT(width)},
         {"vo-tct-height", OPT_INT(height)},
         {"vo-tct-256", OPT_FLAG(term256)},
@@ -182,6 +182,12 @@ static const struct block_element block_elements[NUM_ELEMENTS] = {
         .utf8="\xe2\x96\x89" },
 };
 
+struct rgb_color {
+    unsigned char r;
+    unsigned char g;
+    unsigned char b;
+};
+
 struct block_elem_info {
     enum block_elem_type type;
     char* utf8; // UTF8 bytes of Unicode char
@@ -194,12 +200,6 @@ struct block_elem_info {
 
 // square operation
 #define square(v)  ((v) * (v))
-
-struct rgb_color {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-};
 
 
 // Convert RGB24 to xterm-256 8-bit value
@@ -489,7 +489,7 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
             mul_w = 1;
             mul_h = 1;
             break;
-        case ALGO_ALL_BLOCKS:
+        case ALGO_MULTI_BLOCKS:
             mul_w = WINDOW_W;
             mul_h = WINDOW_H;
             break;
@@ -538,7 +538,7 @@ static void flip_page(struct vo *vo)
                 p->frame->planes[0], p->frame->stride[0],
                 p->opts->term256, p->lut);
             break;
-        case ALGO_ALL_BLOCKS:
+        case ALGO_MULTI_BLOCKS:
             write_all_blocks(
                 vo->dwidth, vo->dheight, p->swidth, p->sheight,
                 p->frame->planes[0], p->frame->stride[0],

@@ -371,8 +371,8 @@ Available video output drivers are:
         half-blocks
             Uses unicode LOWER HALF BLOCK character to achieve higher vertical
             resolution. (Default.)
-        all-blocks
-            Uses all unicode block element characters to increase resolution over 
+        multi-blocks
+            Uses more unicode block element characters to increase resolution over 
             half-block algorithm.
         plain
             Uses spaces. Causes vertical resolution to drop twofolds, but in
