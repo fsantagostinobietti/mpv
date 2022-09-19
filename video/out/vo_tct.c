@@ -91,6 +91,7 @@ struct priv {
     struct mp_rect dst;
     struct mp_sws_context *sws;
     struct lut_item lut[256];
+    enum block_elem_type *prev_win_types;
 };
 
 
@@ -396,19 +397,28 @@ static struct block_elem_info best_fg_bg(
 
 // Return UTF8 representation for best block element that fits window of pixels
 static const struct block_elem_info guess_best_block_element(
+        const enum block_elem_type prev_type, 
         struct rgb_color win_pixels[WINDOW_SZ] )
 {
     struct block_elem_info best_elem = { .loss = INT_MAX };
+    struct block_elem_info best_prev_elem = {};
+    #define THRESHOLD 0.5
     for (enum block_elem_type el_type=0; el_type<NUM_ELEMENTS ;++el_type) {
         struct block_elem_info elem = best_fg_bg(el_type, win_pixels);
-        if (elem.loss < best_elem.loss) {
+        if (el_type == prev_type)
+            best_prev_elem = elem;
+        if (elem.loss < best_elem.loss)
             best_elem = elem;
-        }
     }
-    return best_elem; 
+    // Sometimes the best elem tends to change too frequently from one frame to the next.
+    // And this produce an annoying effect. For this reason, best elem is choosen only
+    // when it is significantly better then the best of the previous frame.
+    double th = (1.0*(best_prev_elem.loss - best_elem.loss)) / best_elem.loss;
+    return (th > THRESHOLD) ? best_elem : best_prev_elem;
 }
 
 static void write_all_blocks(
+    enum block_elem_type prev_types[],
     const int dwidth, const int dheight,
     const int swidth, const int sheight,
     unsigned char *source, int source_stride,
@@ -435,7 +445,11 @@ static void write_all_blocks(
                     rows[i] += 3; // next pixel on this row
                 }
 
-            const struct block_elem_info elem = guess_best_block_element(win_pixels);
+            const unsigned int idx = (y / WINDOW_H) * swidth + x;
+            const struct block_elem_info elem = guess_best_block_element(prev_types[idx], win_pixels);
+            // update best elem type for use in next frame
+            prev_types[idx] = elem.type;
+
             if (term256) {
                 print_seq1(lut, ESC_COLOR256_BG, rgb_to_x256(elem.bg.r, elem.bg.g, elem.bg.b));
                 print_seq1(lut, ESC_COLOR256_FG, rgb_to_x256(elem.fg.r, elem.fg.g, elem.fg.b)); 
@@ -503,6 +517,10 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
     if (!p->frame)
         return -1;
 
+    if (p->prev_win_types)
+        talloc_free(p->prev_win_types);
+    p->prev_win_types = talloc_zero_array(NULL, enum block_elem_type, p->swidth * p->sheight);
+
     if (mp_sws_reinit(p->sws) < 0)
         return -1;
 
@@ -540,6 +558,7 @@ static void flip_page(struct vo *vo)
             break;
         case ALGO_MULTI_BLOCKS:
             write_all_blocks(
+                p->prev_win_types,
                 vo->dwidth, vo->dheight, p->swidth, p->sheight,
                 p->frame->planes[0], p->frame->stride[0],
                 p->opts->term256, p->lut);
@@ -561,6 +580,8 @@ static void uninit(struct vo *vo)
     struct priv *p = vo->priv;
     if (p->frame)
         talloc_free(p->frame);
+    if (p->prev_win_types)
+        talloc_free(p->prev_win_types);
 }
 
 static int preinit(struct vo *vo)
